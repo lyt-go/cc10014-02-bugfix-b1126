@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app.schemas import ActionPayload, ActionResult, EntryPayload, PageResult
-from app.services import SERVICE_INSTANCES, service_for
+from app.services import SERVICE_INSTANCES, funding_ledger, service_for
 from app.store import store
 
 router = APIRouter(prefix="/api", tags=["业务资源"])
@@ -112,6 +112,12 @@ def cross_module_snapshot(
     return store.cross_module_snapshot(module_list)
 
 
+@router.get("/cross-module/funding-balance/{process}")
+def funding_balance(process: str) -> dict[str, Any]:
+    """某工序的可用冲减余额与对账明细，供签认审批和修缮支出台账共同核对。"""
+    return funding_ledger.reconcile_process(process)
+
+
 @router.get("/cross-module/dependent-status/{module}/{entry_id}")
 def get_dependent_status(module: str, entry_id: int) -> dict[str, Any]:
     """获取指定条目的上下游跨模块依赖状态。"""
@@ -162,6 +168,19 @@ def get_dependent_status(module: str, entry_id: int) -> dict[str, Any]:
             if sched.get("计划工序", "") == process:
                 result["downstream"].append({"module": "construction_schedule", "id": sched.get("id"),
                     "name": sched.get("计划工序"), "status": sched.get("status")})
+        # 减项签证对应的修缮支出退款行，供签认审批与支出台账核对同一笔冲减。
+        refund = funding_ledger.find_refund_row(entry_id)
+        if refund is not None:
+            result["downstream"].append({
+                "module": "funding_use",
+                "id": refund.get("id"),
+                "name": refund.get("支出项目", ""),
+                "status": refund.get("status", ""),
+                "冲减回执": refund.get(funding_ledger.REFUND_RECEIPT_FIELD, ""),
+                "退款金额": refund.get("退款金额", 0),
+                "入账状态": refund.get("入账状态", ""),
+            })
+        result["funding_balance"] = funding_ledger.reconcile_process(process)
     elif module == "acceptance_record":
         process = entry.get("验收工序", "")
         for qi in store.rows("quality_inspect"):

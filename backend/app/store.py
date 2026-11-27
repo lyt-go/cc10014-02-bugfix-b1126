@@ -77,6 +77,22 @@ class Store:
             for k in expired:
                 del self._idempotent_log[k]
 
+    def clear_idempotent(
+        self, module: str, entry_id: int, *, keep_action: str | None = None
+    ) -> None:
+        """清除某条记录动作的幂等标记。
+
+        用于驳回等反向动作：驳回后重新签认是新的合法请求，若沿用上一轮
+        的幂等窗口会被误判为重复提交。``keep_action`` 保留本次动作自身的标记，
+        使同一次驳回的重复点击仍被挡住。
+        """
+        prefix = f"{module}:{entry_id}:"
+        keep_key = self.idempotent_key(module, entry_id, keep_action) if keep_action else None
+        with self._lock:
+            for key in list(self._idempotent_log):
+                if key.startswith(prefix) and key != keep_key:
+                    del self._idempotent_log[key]
+
     # ── 并发保护 ──
     def acquire_resource(self, resource_key: str, wait_timeout: float = 5.0) -> bool:
         """获取资源锁，用于并发操作保护。"""
